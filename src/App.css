@@ -1,0 +1,11 @@
+#Section {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background-color: #F1F2F4;
+}
+
+#Main {
+  background-color: azure;
+}
