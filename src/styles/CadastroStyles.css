@@ -1,0 +1,102 @@
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: #e3e5ea;
+  color: #233246;
+}
+
+#Main {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px 40px;
+  background: #e3e5ea;
+  box-sizing: border-box;
+}
+
+#Card {
+  width: min(100%, 420px);
+  background: #f5f6f8;
+  border: 1px solid #e0e3ea;
+  border-radius: 18px;
+  padding: 32px 28px 24px;
+  box-sizing: border-box;
+}
+
+#Title {
+  margin: 0 0 24px;
+  text-align: center;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.8rem;
+  color: #111111;
+}
+
+#Form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.FieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.FieldGroup label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.FieldGroup input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  background: #eceff3;
+  border: 1px solid #d7dbe3;
+  border-radius: 10px;
+  color: #1a1a1a;
+  outline: none;
+}
+
+#SubmitButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  background: #4f8df3;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#LoginRedirect {
+  margin: 20px 0 0;
+  font-size: 0.9rem;
+  color: #6b6b70;
+  text-align: center;
+}
+
+#LoginRedirect a {
+  color: #2d78f0;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+#LoginRedirect a:hover {
+  text-decoration: underline;
+}
