@@ -1,0 +1,13 @@
+-- 12. TODOS TABLE (for testing)
+create table if not exists public.todos (
+    id uuid primary key default uuid_generate_v4(),
+    name text not null,
+    created_at timestamp with time zone default now()
+);
+
+-- Insert sample data
+insert into public.todos (name) values
+('Learn Supabase'),
+('Build PAPP app'),
+('Deploy to Vercel')
+on conflict do nothing;
