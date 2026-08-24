@@ -1,0 +1,201 @@
+PLANO DE IMPLEMENTAÇÃO — SEED ADMIN + CRIAÇÃO DE USUÁRIOS POR CARGO
+PAPP - Supabase + Vite + React
+Data: 2026-08-24
+
+================================================================
+1. OBJETIVO
+================================================================
+Hoje qualquer pessoa escolhe ser aluno/professor/coordenador no Cadastro. 
+Isso é inseguro. O correto é:
+- Cadastro público cria APENAS aluno (ou nem existe)
+- Um ADMIN seedado cria professores e coordenadores (e alunos se quiser)
+- Login continua lendo a role das tabelas alunos/professores/coordenadores/admins
+
+================================================================
+2. PROBLEMA ATUAL
+================================================================
+- Cadastro.jsx: select role = aluno/professor/coordenador (qualquer um vira coordenador)
+- Login.jsx: confia em user_metadata.role (pode ser forjado)
+- Tabelas: alunos, professores, coordenadores, admins, disciplinas, turmas, atividades, entregas existem mas sem seed admin
+- RLS: políticas atuais permitem qualquer authenticated inserir na própria tabela (auth.uid() = id) — bom para aluno se auto-cadastrar, ruim para professor/coordenador
+
+================================================================
+3. SOLUÇÃO PROPOSTA (Opção B mantida)
+================================================================
+- Criar 1 ADMIN seed via SQL + Auth (ex: admin@papp.com / Admin123!)
+- Remover o <select role> do Cadastro público. Cadastro público = só aluno.
+- Criar tela /admin (protegida) onde só admin logado cadastra: nome, email, senha, cargo (aluno/professor/coordenador/admin)
+- Login passa a resolver role consultando as 4 tabelas por id/email (na ordem: admins > coordenadores > professores > alunos)
+- RLS: professores/coordenadores/admins só podem ser inseridos por quem já é admin. Alunos pode ser por auto-cadastro OU só por admin (você escolhe).
+
+================================================================
+4. BANCO DE DADOS
+================================================================
+4.1. Estrutura atual (já criada, prints 120430/120438)
+  - alunos(id uuid PK FK auth.users, nome, email unique, ...)
+  - professores(id uuid PK FK auth.users, nome, email unique, ...)
+  - coordenadores(id uuid PK FK auth.users, nome, email unique, ...)
+  - admins(id uuid PK FK auth.users, email unique, full_name, role, password_hash, created_at)
+  - disciplinas, turmas, atividades, entregas, notificacoes
+
+4.2. Seed admin (2 etapas)
+  Etapa A - Crie o usuário no Auth (faça 1 vez):
+    Opção 1 (recomendada): Dashboard > Authentication > Users > Add user > Create new user
+      email: admin@papp.com
+      password: Admin123!  (troque depois)
+      Auto Confirm User = ON  -> Create
+      copie o UID gerado (ex: aaaaaaaa-bbbb-...)
+
+    Opção 2 (via SQL, se quiser script):
+      -- ATENÇÃO: auth.users é gerenciado pelo Supabase. Prefira Opção 1.
+      -- Se usar SQL, precisa setar encrypted_password corretamente (não recomendado).
+
+  Etapa B - Insira na tabela admins com o MESMO id do Auth:
+    insert into public.admins (id, email, full_name, role)
+    values (
+      'UID_COPIADO_DO_AUTH',  -- ex: 'dfe39a56-...' 
+      'admin@papp.com',
+      'Admin PAPP',
+      'admin'
+    );
+
+  Seed para dev (coloque em supabase/seed_admin.sql):
+    -- após criar o usuário admin@papp.com manualmente, rode:
+    insert into public.admins (id, email, full_name, role)
+    select id, email, 'Admin PAPP', 'admin'
+    from auth.users where email = 'admin@papp.com'
+    on conflict (id) do nothing;
+
+4.3. RLS novas (rodar no SQL Editor depois do seed)
+  -- ALUNOS: permite auto-cadastro OU só admin (escolha 1)
+  -- Escolha 1: auto-cadastro liberado (atual) -> mantém alunos_insert_own = auth.uid() = id
+  -- Escolha 2: SÓ admin cria alunos (mais seguro) -> troque para:
+  --   create policy "alunos_insert_admin_only" on public.alunos for insert with check (
+  --     exists (select 1 from public.admins where id = auth.uid())
+  --   );
+
+  -- PROFESSORES / COORDENADORES / ADMINS: SÓ admin cria
+  drop policy if exists "professores_insert_own" on public.professores;
+  create policy "professores_insert_admin" on public.professores for insert with check (
+    exists (select 1 from public.admins where id = auth.uid())
+  );
+  drop policy if exists "coordenadores_insert_own" on public.coordenadores;
+  create policy "coordenadores_insert_admin" on public.coordenadores for insert with check (
+    exists (select 1 from public.admins where id = auth.uid())
+  );
+  drop policy if exists "admins_insert_admin" on public.admins;
+  create policy "admins_insert_admin" on public.admins for insert with check (
+    exists (select 1 from public.admins where id = auth.uid())
+  );
+  -- select: todos autenticados podem ler (para login resolver role)
+  -- já existe "select_all" = true, mantenha
+
+================================================================
+5. FRONTEND - MUDANÇAS DE CÓDIGO
+================================================================
+5.1. Cadastro público (src/screens/Cadastro.jsx)
+  - REMOVER: <select id="roleInput"> e state role
+  - FIXAR: const role = "aluno"
+  - handleSubmit: sempre insere em "alunos" (não precisa de if role)
+  - Mensagem: "Cadastro como aluno realizado!" 
+  - Opcional: remover a tela de cadastro público e deixar só Login + "Fale com o admin"
+
+5.2. Login (src/screens/Login.jsx) - já atualizado para Opção B, só adicionar admins
+  - Na busca de role, incluir admins primeiro:
+    const [adminRes, coordRes, profRes, alunoRes] = await Promise.all([
+      supabase.from("admins").select("id").eq("id", uid).maybeSingle(),
+      supabase.from("coordenadores").select("id").eq("id", uid).maybeSingle(),
+      supabase.from("professores").select("id").eq("id", uid).maybeSingle(),
+      supabase.from("alunos").select("id").eq("id", uid).maybeSingle(),
+    ]);
+    if (adminRes.data) role = "admin";
+    else if (coordRes.data) role = "coordenador";
+    // ...
+
+5.3. Nova tela Admin (src/screens/AdminPanel.jsx) - CRIAR
+  - Rota protegida: só entra se supabase.from("admins").select("id").eq("id", authUser.id).single() existe
+  - Formulário: nome, email, senha, cargo (select: aluno/professor/coordenador/admin), turma/serie opcional
+  - handleCreate:
+    const { data, error } = await supabase.auth.signUp({ email, password, options:{data:{full_name: nome}} });
+    if (error) throw error;
+    const uid = data.user.id;
+    // espera 300ms para sessão
+    if (cargo === "aluno") await supabase.from("alunos").insert({ id: uid, nome, email });
+    if (cargo === "professor") await supabase.from("professores").insert({ id: uid, nome, email });
+    // etc. Como o admin está logado, a política admin_only vai deixar passar
+  - IMPORTANTE: não use service_role no frontend. Use a sessão do admin logado. Se precisar criar sem logar o novo usuário (signUp desloga o admin), use 2 alternativas:
+    a) Após signUp, faça supabase.auth.signOut() e depois signIn de volta como admin (chato)
+    b) MELHOR: crie via Edge Function com service_role (ver 5.4) ou use supabase.auth.admin.createUser (só com service_role no backend)
+
+  - Alternativa simples sem Edge Function: mantenha o signUp mas logo após faça:
+    await supabase.auth.signOut();
+    await supabase.auth.signInWithPassword({ email: adminEmail, password: adminPassword }); // guarda em memória
+
+5.4. Edge Function opcional (supabase/functions/create-user)
+  - Protegida, recebe { nome, email, password, cargo } + verifica se requester é admin (via JWT)
+  - Usa supabase com SERVICE_ROLE_KEY para criar: supabaseAdmin.auth.admin.createUser({ email, password, email_confirm:true, user_metadata:{full_name: nome} })
+  - Depois insere na tabela correta com service_role (bypassa RLS)
+  - Frontend chama: supabase.functions.invoke("create-user", { body: { nome, email, password, cargo } })
+  - Vantagem: admin não é deslogado, mais seguro
+
+5.5. App.jsx / main.jsx - Roteamento
+  - Adicionar estado "admin" e rota:
+    if (role === "admin") return <AdminPanel onLogout={...} />
+  - Proteger: se tentar acessar /admin sem ser admin, redirect para Login
+
+================================================================
+6. FLUXO FINAL
+================================================================
+- Seed: admin@papp.com criado manualmente (1 vez)
+- Admin loga (Login -> detecta role admin via tabela admins -> vai pra AdminPanel)
+- Admin preenche formulário "Criar usuário" -> escolhe cargo -> cria no Auth + tabela correta
+- Usuário criado recebe email/senha e faz Login normal -> cai na tela Aluno/Professor/Coordenador conforme tabela onde foi inserido
+- Cadastro público (se mantido) só cria aluno, sem escolha de cargo
+
+================================================================
+7. SEGURANÇA
+================================================================
+- NUNCA exponha SERVICE_ROLE_KEY no frontend (.env com VITE_). Use só em Edge Function / backend.
+- Remova o role do user_metadata como fonte de verdade. A verdade é a tabela (alunos/professores/...).
+- Valide no RLS que só admin insere professores/coordenadores.
+- Desative signUp público se quiser 100% admin-only: Dashboard > Authentication > Providers > Email > Disable Sign Up = ON (aí só via AdminPanel/Edge Function cria).
+
+================================================================
+8. PASSOS DE IMPLEMENTAÇÃO (ordem)
+================================================================
+1. Criar admin@papp.com via Dashboard > Add user (Auto Confirm) -> copiar UID -> insert em public.admins (SQL do item 4.2)
+2. Rodar fix_rls_opcaoB.sql atualizado com políticas admin_only (item 4.3) no SQL Editor
+3. Editar Cadastro.jsx: remover select role, fixar aluno (5.1)
+4. Editar Login.jsx: adicionar checagem em admins (5.2) -> já fiz um prévio, só falta admins
+5. Criar AdminPanel.jsx + rota (5.3)
+6. Testar: logar como admin@papp.com -> criar professor_teste@teste.com como professor -> ver em Table Editor > professores -> logar como professor_teste -> deve cair em TelaProfessor
+7. (Opcional) Criar Edge Function create-user para não deslogar admin
+8. Commit: git add src/screens/Cadastro.jsx src/screens/Login.jsx src/screens/AdminPanel.jsx fix_rls_opcaoB.sql
+
+================================================================
+9. TESTES
+================================================================
+- Teste A: Cadastro público como aluno -> Table Editor > alunos tem linha? Login como aluno -> TelaAluno?
+- Teste B: Admin cria professor -> Table Editor > professores tem linha? Login como professor -> TelaProfessor (não Aluno)?
+- Teste C: Usuário comum tenta POST direto em professores via anon (curl) -> deve dar 42501 RLS (protegido)
+- Teste D: Rate limit 429 -> criar via AdminPanel com Edge Function não deve estourar
+
+================================================================
+10. PRÓXIMOS PASSOS SUGERIDOS
+================================================================
+- Decidir: Cadastro público continua existindo (só aluno) ou vira 100% admin-only?
+- Criar seed de turmas/disciplinas para testar vínculo aluno-turma
+- Popular atividades e entregas com dados reais em vez de mocks (TelaProfessor.jsx hoje usa mocks)
+- Adicionar "Esqueci senha" (supabase.auth.resetPasswordForEmail)
+
+================================================================
+ARQUIVOS PARA RODAR/COMMITAR
+================================================================
+- fix_rls_opcaoB.sql (já existe, atualizar com políticas admin_only)
+- supabase/seed_admin.sql (novo, com insert em admins)
+- src/screens/Cadastro.jsx (editar)
+- src/screens/Login.jsx (editar - incluir admins)
+- src/screens/AdminPanel.jsx (novo)
+- .env (manter VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)
+
+Dúvida? Me diga se quer que eu já gere o AdminPanel.jsx e o seed_admin.sql agora.

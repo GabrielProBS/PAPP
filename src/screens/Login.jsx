@@ -5,7 +5,6 @@ import { supabase } from "../../utils/supabase";
 function Login({ onNavigateToCadastro, onNavigateToAluno, onNavigateToProfessor, onNavigateToCoordenador }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -24,50 +23,65 @@ function Login({ onNavigateToCadastro, onNavigateToAluno, onNavigateToProfessor,
     event.preventDefault();
     setErrorMsg(null);
     setLoading(true);
-    const normalized = email.toLowerCase().trim();
 
     try {
-      // Tenta Supabase real
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
 
       if (data?.user) {
-        // tenta pegar role do metadata ou profiles
+        // 1. tenta metadata
         let role = data.user.user_metadata?.role;
+
+        // 2. se não tiver, busca nas 3 tabelas (Opção B)
         if (!role) {
-          try {
-            const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
-            role = profile?.role;
-          } catch (_) {}
+          const uid = data.user.id;
+          // busca em paralelo
+          const [alunoRes, profRes, coordRes] = await Promise.all([
+            supabase.from("alunos").select("id").eq("id", uid).maybeSingle(),
+            supabase.from("professores").select("id").eq("id", uid).maybeSingle(),
+            supabase.from("coordenadores").select("id").eq("id", uid).maybeSingle(),
+          ]);
+
+          if (alunoRes.data) role = "aluno";
+          else if (profRes.data) role = "professor";
+          else if (coordRes.data) role = "coordenador";
+          else {
+            // fallback: tenta por email (caso id não seja FK)
+            const normalizedEmail = email.toLowerCase().trim();
+            const [alunoEmail, profEmail, coordEmail] = await Promise.all([
+              supabase.from("alunos").select("id").ilike("email", normalizedEmail).maybeSingle(),
+              supabase.from("professores").select("id").ilike("email", normalizedEmail).maybeSingle(),
+              supabase.from("coordenadores").select("id").ilike("email", normalizedEmail).maybeSingle(),
+            ]);
+            if (alunoEmail.data) role = "aluno";
+            else if (profEmail.data) role = "professor";
+            else if (coordEmail.data) role = "coordenador";
+          }
         }
-        // fallback por email se role não existir
+
+        // 3. fallback por email se ainda sem role (dev)
         if (!role) {
+          const normalized = email.toLowerCase().trim();
           if (normalized.includes("coord")) role = "coordenador";
           else if (normalized.includes("prof")) role = "professor";
           else role = "aluno";
         }
+
         navigateByRole(role);
         return;
       }
     } catch (err) {
-      // Se Supabase falhar (tabela não existe, user não existe), usa mock por email
-      console.warn("Login Supabase falhou, usando mock:", err?.message);
-      if (normalized.includes("coord")) {
-        navigateByRole("coordenador");
-        return;
-      }
-      if (normalized.includes("prof")) {
-        navigateByRole("professor");
-        return;
-      }
-      // se for erro real de senha, mostra mas ainda permite mock para dev
-      if (err?.message && !normalized.includes("@")) {
+      console.warn("Login erro:", err?.message, err);
+      // mensagens claras em vez de mock silencioso
+      if (err.message?.includes("Email logins are disabled")) {
+        setErrorMsg("Login por email desativado no Supabase. Ative em Authentication > Providers > Email > Enable Email = ON");
+      } else if (err.message?.includes("Email not confirmed")) {
+        setErrorMsg("Email não confirmado. Confirme em Authentication > Users ou desative Confirm email em Providers > Email");
+      } else if (err.message?.includes("Invalid login credentials")) {
+        setErrorMsg("Email ou senha inválidos.");
+      } else {
         setErrorMsg(err.message);
-        setLoading(false);
-        return;
       }
-      navigateByRole("aluno");
-      return;
     } finally {
       setLoading(false);
     }
@@ -75,10 +89,7 @@ function Login({ onNavigateToCadastro, onNavigateToAluno, onNavigateToProfessor,
 
   const handleCadastroClick = (event) => {
     event.preventDefault();
-
-    if (onNavigateToCadastro) {
-      onNavigateToCadastro();
-    }
+    if (onNavigateToCadastro) onNavigateToCadastro();
   };
 
   return (
@@ -145,9 +156,6 @@ function Login({ onNavigateToCadastro, onNavigateToAluno, onNavigateToProfessor,
           <button type="button" onClick={() => onNavigateToProfessor && onNavigateToProfessor()} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #d6dce6', background: '#fff', color: '#2b7fff', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer' }}>Professor</button>
           <button type="button" onClick={() => onNavigateToCoordenador && onNavigateToCoordenador()} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #d6dce6', background: '#fff', color: '#2b7fff', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer' }}>Coordenador</button>
         </div>
-        <p style={{ marginTop: 10, fontSize: '0.74rem', color: '#8a93a3', textAlign: 'center', maxWidth: 340 }}>
-          Dica: use <strong>prof@</strong> no email para entrar como professor e <strong>coord@</strong> para coordenador (preparado para Supabase).
-        </p>
       </section>
     </main>
   );
